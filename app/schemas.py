@@ -25,9 +25,6 @@ class MisurazioneOut(BaseModel):
     pm10:          Optional[float] = None
     pm25:          Optional[float] = None
     no2:           Optional[float] = None
-    co:            Optional[float] = None
-    o3:            Optional[float] = None
-    so2:           Optional[float] = None
 
     class Config:
         from_attributes = True

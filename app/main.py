@@ -19,7 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger("arpac")
 
 _scheduler: BackgroundScheduler | None = None
-HISTORICAL_START = "03-2023"
+HISTORICAL_START = "01-2025"
 
 
 def _run_seed() -> None:

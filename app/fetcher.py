@@ -36,9 +36,6 @@ POLLUTANT_MAP: Dict[str, str] = {
     "PM25":  "pm25",
     "NO2":   "no2",
     "NOX":   "no2",
-    "CO":    "co",
-    "O3":    "o3",
-    "SO2":   "so2",
 }
 
 
@@ -223,9 +220,7 @@ def normalize_month_records(
             grouped[key] = {
                 "centralina_id": centralina_id,
                 "timestamp": timestamp,
-                "pm10": None, "pm25": None,
-                "no2":  None, "co":   None,
-                "o3":   None, "so2":  None,
+                "pm10": None, "pm25": None, "no2": None,
             }
 
         campo = POLLUTANT_MAP.get(str(rec.get("Inquinante", "")).strip().upper())

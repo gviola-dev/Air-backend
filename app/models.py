@@ -35,9 +35,6 @@ class Misurazione(Base):
     pm10      = Column(Float, nullable=True)
     pm25      = Column(Float, nullable=True)
     no2       = Column(Float, nullable=True)
-    co        = Column(Float, nullable=True)
-    o3        = Column(Float, nullable=True)
-    so2       = Column(Float, nullable=True)
 
     centralina = relationship("CentralineArpac", back_populates="misurazioni")
 
