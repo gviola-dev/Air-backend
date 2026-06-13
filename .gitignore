@@ -1,0 +1,22 @@
+# Ambiente Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Database locale
+*.db
+*.sqlite3
+
+# Variabili d'ambiente
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

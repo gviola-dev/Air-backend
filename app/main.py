@@ -1,97 +1,103 @@
+import logging
+import threading
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import List
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, Depends, Query
+from apscheduler.triggers.interval import IntervalTrigger
+from fastapi import Depends, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from app import crud, models, schemas
-from app.database import SessionLocal, engine, get_db
-from app.fetcher import fetch_and_store
+from app import crud, schemas
+from app.database import get_db, init_db
 
-# ── Crea le tabelle al primo avvio ────────────────────────────────────────────
-models.Base.metadata.create_all(bind=engine)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("arpac")
 
-# ── Scheduler ─────────────────────────────────────────────────────────────────
-scheduler = BackgroundScheduler()
+_scheduler: BackgroundScheduler | None = None
+HISTORICAL_START = "03-2023"
 
 
-def scheduled_fetch():
-    """Viene chiamata dallo scheduler ogni 30 minuti."""
-    db = SessionLocal()
+def _run_seed() -> None:
+    """Eseguito in background thread all'avvio: non blocca il server."""
     try:
-        fetch_and_store(db)
-    finally:
-        db.close()
+        logger.info("=== SEED centraline ===")
+        crud.seed_centraline()
+        logger.info("=== SEED misurazioni storiche da %s ===", HISTORICAL_START)
+        crud.seed_historical_misurazioni(HISTORICAL_START)
+        logger.info("=== Seed completato ===")
+    except Exception:
+        logger.exception("Errore durante il seed iniziale")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: fetch immediato + job periodico
-    scheduled_fetch()
-    scheduler.add_job(scheduled_fetch, "interval", minutes=30, id="auto_fetch")
-    scheduler.start()
+    global _scheduler
+    init_db()
+    threading.Thread(target=_run_seed, daemon=True).start()
+    _scheduler = BackgroundScheduler()
+    _scheduler.add_job(
+        crud.refresh_latest,
+        trigger=IntervalTrigger(hours=1),
+        id="refresh_arpac_latest",
+        replace_existing=True,
+        next_run_time=None,  # prima esecuzione al prossimo tick, il seed copre il mese corrente
+    )
+    _scheduler.start()
+    logger.info("Scheduler ARPAC avviato")
     yield
-    # Shutdown
-    scheduler.shutdown(wait=False)
+    _scheduler.shutdown(wait=False)
 
 
-# ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Naples Weather & Air Quality",
+    title="Air Quality ARPAC Campania",
     description=(
-        "Fetcha dati da **Open-Meteo Forecast** e **Open-Meteo Air Quality** "
-        "ogni 30 minuti e li espone via REST.\n\n"
-        "Nessuna API key richiesta."
+        "Dati qualità dell'aria ARPAC Campania — stazioni di monitoraggio e misurazioni "
+        "validate. Aggiornamento automatico ogni ora."
     ),
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # ← in produzione metti l'URL del tuo frontend
+    allow_origins=["*"],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
-
 @app.get("/", summary="Health check")
 def root():
-    return {"status": "running", "docs": "/docs", "openapi": "/openapi.json"}
+    return {"status": "running", "docs": "/docs"}
 
 
 @app.get(
-    "/readings",
-    response_model=List[schemas.ReadingOut],
-    summary="Leggi i dati dal DB",
+    "/centraline",
+    response_model=List[schemas.CentralinaOut],
+    summary="Lista stazioni ARPAC",
 )
-def get_readings(
-    source: Optional[str] = Query(
-        None,
-        description="Filtra per sorgente: `forecast` oppure `air_quality`",
-    ),
-    skip:  int = Query(0,  ge=0,              description="Offset"),
-    limit: int = Query(50, ge=1, le=500,      description="Numero massimo di record"),
+def list_centraline(
+    skip:  int = Query(0,   ge=0,         description="Offset"),
+    limit: int = Query(100, ge=1, le=500, description="Numero massimo di stazioni"),
     db: Session = Depends(get_db),
 ):
-    """
-    Restituisce le letture salvate nel DB, dalla più recente alla meno recente.
-
-    - **source**: filtra per `forecast` o `air_quality` (opzionale)
-    - **skip / limit**: paginazione
-    """
-    return crud.get_readings(db, source=source, skip=skip, limit=limit)
+    return crud.get_centraline(db, skip=skip, limit=limit)
 
 
-@app.post("/fetch", summary="Forza fetch manuale")
-def trigger_fetch(db: Session = Depends(get_db)):
-    """
-    Trigera immediatamente un fetch delle due API esterne.
-    Utile per test o aggiornamenti on-demand.
-    """
-    results = fetch_and_store(db)
-    return {"status": "ok", "results": results}
+@app.get(
+    "/centraline/{centralina_id}/misurazioni",
+    response_model=List[schemas.MisurazioneOut],
+    summary="Serie temporale inquinanti per una stazione",
+)
+def get_misurazioni(
+    centralina_id: int,
+    skip:  int = Query(0,   ge=0,           description="Offset"),
+    limit: int = Query(100, ge=1, le=1_000, description="Numero massimo di misurazioni"),
+    db: Session = Depends(get_db),
+):
+    return crud.get_misurazioni(db, centralina_id=centralina_id, skip=skip, limit=limit)
