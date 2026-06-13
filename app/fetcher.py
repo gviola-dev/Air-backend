@@ -102,9 +102,9 @@ def fetch_centraline_csv() -> pd.DataFrame:
         ],
     )
     df = df[df["tipo"] != "MOBILE"].copy()
-    # Escludi stazioni STIR e simili senza codice ARPAC valido (codice_arpac = "nd")
-    # — non hanno un identificatore univoco e non compaiono nei dataset CKAN
+    # Escludi stazioni senza codice ARPAC o codice nazionale valido
     df = df[~df["codice_arpac"].isin(["nd", ""])].copy()
+    df = df[~df["codice_nazionale"].isin(["nd", ""])].copy()
     df = df.drop_duplicates(subset=["codice_arpac"]).copy()
     df["latitudine"]  = pd.to_numeric(df["latitudine"],  errors="coerce")
     df["longitudine"] = pd.to_numeric(df["longitudine"], errors="coerce")
@@ -189,7 +189,9 @@ def parse_float(value: Any) -> Optional[float]:
     if value is None or str(value).strip() in ("", "n.d.", "N/A", "-"):
         return None
     try:
-        return float(str(value).replace(",", "."))
+        v = float(str(value).replace(",", "."))
+        # -9999 è il valore sentinella ARPAC per "dato non disponibile/errore strumento"
+        return None if v <= -9999 else v
     except (ValueError, TypeError):
         return None
 
