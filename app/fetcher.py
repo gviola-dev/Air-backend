@@ -93,6 +93,10 @@ def fetch_centraline_csv() -> pd.DataFrame:
         ],
     )
     df = df[df["tipo"] != "MOBILE"].copy()
+    # Escludi stazioni STIR e simili senza codice ARPAC valido (codice_arpac = "nd")
+    # — non hanno un identificatore univoco e non compaiono nei dataset CKAN
+    df = df[~df["codice_arpac"].isin(["nd", ""])].copy()
+    df = df.drop_duplicates(subset=["codice_arpac"]).copy()
     df["latitudine"]  = pd.to_numeric(df["latitudine"],  errors="coerce")
     df["longitudine"] = pd.to_numeric(df["longitudine"], errors="coerce")
     df = df.dropna(subset=["latitudine", "longitudine"]).reset_index(drop=True)
