@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -65,6 +65,14 @@ def seed_centraline() -> int:
     rows = df.to_dict(orient="records")
 
     with SessionLocal() as session:
+        # Rimuovi eventuali centraline con codice_arpac numerico (da import precedente
+        # con parsing errato che usava il codice nazionale numerico al posto di quello IT-format)
+        deleted = session.execute(
+            text("DELETE FROM centraline_arpac WHERE codice_arpac ~ '^[0-9]+$'")
+        ).rowcount
+        if deleted:
+            logger.info("seed_centraline: rimossi %d record con codice numerico errato", deleted)
+
         stmt = pg_insert(CentralineArpac).values(rows)
         stmt = stmt.on_conflict_do_update(
             index_elements=["codice_arpac"],

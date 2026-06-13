@@ -32,6 +32,7 @@ LAT_PATTERN = re.compile(r"^4[01]\.\d+$")
 POLLUTANT_MAP: Dict[str, str] = {
     "PM10":  "pm10",
     "PM2.5": "pm25",
+    "PM2,5": "pm25",   # notazione italiana usata da ARPAC
     "PM25":  "pm25",
     "NO2":   "no2",
     "NOX":   "no2",
