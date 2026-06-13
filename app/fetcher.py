@@ -13,11 +13,11 @@ import pandas as pd
 
 logger = logging.getLogger("arpac")
 
+ARPAC_API_BASE = "https://dati.arpacampania.it/api/3/action"
 ARPAC_VALIDATED_PACKAGE_URL = (
-    "https://dati.arpacampania.it/api/3/action/package_show"
-    "?id=dati-rqa-giornalieri-validati"
+    f"{ARPAC_API_BASE}/package_show?id=dati-rqa-giornalieri-validati"
 )
-ARPAC_DATASTORE_URL = "https://dati.arpacampania.it/api/3/action/datastore_search"
+ARPAC_DATASTORE_URL = f"{ARPAC_API_BASE}/datastore_search"
 ARPAC_METADATA_CSV_URL = (
     "https://dati.arpacampania.it/dataset/96eba21b-4191-4985-9205-e3b1800ad42a"
     "/resource/28bce378-02fe-4ff0-bc09-f598378389e6"
@@ -249,3 +249,72 @@ def get_latest_resource_id() -> Optional[str]:
             m, y = 12, y - 1
 
     return None
+
+
+def fetch_station_month_records(
+    resource_id: str,
+    codice_arpac: str,
+    limit: int = 32_000,
+) -> List[Dict[str, Any]]:
+    """
+    Scarica tutti i record di un mese per una singola centralina.
+    Usa filtro server-side (POST CKAN) per scaricare solo i dati della stazione
+    richiesta — molto più efficiente del download completo del mese.
+    """
+    records: List[Dict[str, Any]] = []
+    offset = 0
+
+    with httpx.Client(timeout=60) as client:
+        while True:
+            resp = client.post(
+                ARPAC_DATASTORE_URL,
+                json={
+                    "resource_id": resource_id,
+                    "filters": {"Stazione": codice_arpac},
+                    "fields": ["Stazione", "Inquinante", "Data_ora", "Valore"],
+                    "limit": limit,
+                    "offset": offset,
+                    "include_total": True,
+                },
+            )
+            resp.raise_for_status()
+            result = resp.json()["result"]
+            batch = result.get("records", [])
+            records.extend(batch)
+            offset += len(batch)
+            if not batch or offset >= result.get("total", 0):
+                break
+
+    return records
+
+
+def normalize_station_records(
+    raw_records: List[Dict[str, Any]],
+    centralina_id: int,
+) -> List[Dict[str, Any]]:
+    """
+    Normalizza i record CKAN di una singola centralina raggruppando per timestamp.
+
+    Ogni riga CKAN è un singolo inquinante; questa funzione le aggrega in una
+    riga per timestamp con tutti i valori. La centralina è già nota (non serve
+    fare lookup dal codice_arpac).
+    """
+    grouped: Dict[datetime, Dict[str, Any]] = {}
+
+    for rec in raw_records:
+        timestamp = parse_data_ora(str(rec.get("Data_ora", "")))
+        if timestamp is None:
+            continue
+
+        if timestamp not in grouped:
+            grouped[timestamp] = {
+                "centralina_id": centralina_id,
+                "timestamp": timestamp,
+                "pm10": None, "pm25": None, "no2": None,
+            }
+
+        campo = POLLUTANT_MAP.get(str(rec.get("Inquinante", "")).strip().upper())
+        if campo:
+            grouped[timestamp][campo] = parse_float(rec.get("Valore"))
+
+    return list(grouped.values())

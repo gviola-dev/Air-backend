@@ -10,10 +10,12 @@ from app.database import SessionLocal
 from app.fetcher import (
     fetch_centraline_csv,
     fetch_month_records,
+    fetch_station_month_records,
     get_latest_resource_id,
     get_validated_resource_map,
     month_labels_from,
     normalize_month_records,
+    normalize_station_records,
 )
 from app.models import CentralineArpac, Misurazione
 
@@ -92,45 +94,59 @@ def seed_centraline() -> int:
     return len(rows)
 
 
-def seed_historical_misurazioni(start: str = "03-2023") -> None:
+def seed_historical_misurazioni(start: str = "01-2026") -> None:
     """
-    Importa tutte le misurazioni validate da `start` al mese corrente.
+    Seed storico per-centralina: per ogni stazione nel DB scarica i dati
+    validati da `start` al mese corrente usando filtro server-side CKAN.
+
     Sicuro da rieseguire (ON CONFLICT DO NOTHING).
     Richiede che seed_centraline() sia già stato eseguito.
 
     Parameters
     ----------
     start : str
-        Formato "MM-YYYY". Default "03-2023" = primo mese disponibile ARPAC.
+        Formato "MM-YYYY". Default "01-2026".
     """
     resource_map = get_validated_resource_map()
     labels = month_labels_from(start)
-    logger.info("seed_historical: %d mesi da importare (%s -> oggi)", len(labels), start)
 
-    # Sessione breve solo per caricare la mappa centraline: evita di tenere
-    # una connessione aperta per ore mentre si fanno le chiamate HTTP
+    # Carica lista centraline con sessione breve
     with SessionLocal() as session:
-        centraline_map = _load_centraline_map(session)
-        if not centraline_map:
-            raise RuntimeError("Nessuna centralina nel DB. Eseguire seed_centraline() prima.")
-    logger.info("seed_historical: %d centraline nel DB", len(centraline_map))
+        rows_db = session.execute(
+            select(CentralineArpac.id, CentralineArpac.codice_arpac)
+        ).all()
+    centraline = [(r.id, r.codice_arpac) for r in rows_db]
 
-    for label in labels:
-        resource_id = resource_map.get(label)
-        if resource_id is None:
-            logger.warning("seed_historical: dataset non trovato: %s", label)
-            continue
-        try:
-            logger.info("seed_historical: scaricando %s ...", label)
-            raw  = fetch_month_records(resource_id)
-            rows = normalize_month_records(raw, centraline_map)
-            # Sessione nuova per ogni mese: evita timeout sulla connessione PostgreSQL
-            with SessionLocal() as session:
-                inserted = _bulk_insert_misurazioni(session, rows)
-                session.commit()
-            logger.info("seed_historical: %s -> %d record processati", label, inserted)
-        except Exception:
-            logger.exception("seed_historical: errore su %s, salto al mese successivo", label)
+    if not centraline:
+        raise RuntimeError("Nessuna centralina nel DB. Eseguire seed_centraline() prima.")
+
+    logger.info(
+        "seed_historical: %d centraline × %d mesi (%s -> oggi)",
+        len(centraline), len(labels), start,
+    )
+
+    for centralina_id, codice_arpac in centraline:
+        logger.info("seed_historical: centralina %s ...", codice_arpac)
+        for label in labels:
+            resource_id = resource_map.get(label)
+            if resource_id is None:
+                continue
+            try:
+                raw  = fetch_station_month_records(resource_id, codice_arpac)
+                rows = normalize_station_records(raw, centralina_id)
+                # Sessione nuova per ogni (centralina, mese)
+                with SessionLocal() as session:
+                    inserted = _bulk_insert_misurazioni(session, rows)
+                    session.commit()
+                if inserted:
+                    logger.info(
+                        "seed_historical: %s %s -> %d record",
+                        codice_arpac, label, inserted,
+                    )
+            except Exception:
+                logger.exception(
+                    "seed_historical: errore %s %s, salto", codice_arpac, label
+                )
 
 
 def refresh_latest() -> Dict[str, Any]:
