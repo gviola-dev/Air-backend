@@ -107,23 +107,30 @@ def seed_historical_misurazioni(start: str = "03-2023") -> None:
     labels = month_labels_from(start)
     logger.info("seed_historical: %d mesi da importare (%s -> oggi)", len(labels), start)
 
+    # Sessione breve solo per caricare la mappa centraline: evita di tenere
+    # una connessione aperta per ore mentre si fanno le chiamate HTTP
     with SessionLocal() as session:
         centraline_map = _load_centraline_map(session)
         if not centraline_map:
             raise RuntimeError("Nessuna centralina nel DB. Eseguire seed_centraline() prima.")
-        logger.info("seed_historical: %d centraline nel DB", len(centraline_map))
+    logger.info("seed_historical: %d centraline nel DB", len(centraline_map))
 
-        for label in labels:
-            resource_id = resource_map.get(label)
-            if resource_id is None:
-                logger.warning("seed_historical: dataset non trovato: %s", label)
-                continue
+    for label in labels:
+        resource_id = resource_map.get(label)
+        if resource_id is None:
+            logger.warning("seed_historical: dataset non trovato: %s", label)
+            continue
+        try:
             logger.info("seed_historical: scaricando %s ...", label)
             raw  = fetch_month_records(resource_id)
             rows = normalize_month_records(raw, centraline_map)
-            inserted = _bulk_insert_misurazioni(session, rows)
-            session.commit()
+            # Sessione nuova per ogni mese: evita timeout sulla connessione PostgreSQL
+            with SessionLocal() as session:
+                inserted = _bulk_insert_misurazioni(session, rows)
+                session.commit()
             logger.info("seed_historical: %s -> %d record processati", label, inserted)
+        except Exception:
+            logger.exception("seed_historical: errore su %s, salto al mese successivo", label)
 
 
 def refresh_latest() -> Dict[str, Any]:
