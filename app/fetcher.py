@@ -66,20 +66,29 @@ def fetch_centraline_csv() -> pd.DataFrame:
     for _, row in df_raw.iterrows():
         cells = [str(v).strip() if pd.notna(v) else "" for v in row.tolist()]
 
+        # Il CSV ha 7 colonne fisse prima dell'indirizzo (include "Zona" non documentata):
+        # [0]Rete [1]Zona [2]Nome [3]Cod.Europeo [4]Cod.Nazionale [5]Cod.Arpac [6]Provincia
+        # L'indirizzo parte da cells[7] ed è spezzato da virgole non quotate.
         lat_idx = next(
-            (i for i in range(6, 15) if LAT_PATTERN.match(cells[i])),
+            (i for i in range(8, 25) if LAT_PATTERN.match(cells[i])),
             None,
         )
         if lat_idx is None:
             continue
 
-        sinistra  = cells[:6]
-        tipo      = cells[lat_idx - 1]
-        indirizzo = ", ".join(p for p in cells[6 : lat_idx - 1] if p)
-        lat       = cells[lat_idx]
-        lon       = cells[lat_idx + 1] if lat_idx + 1 < len(cells) else ""
+        codice_europeo   = cells[3]
+        codice_nazionale = cells[4]   # numerico, es. 1506370
+        codice_arpac     = cells[5]   # IT-format, es. IT2219A — chiave usata da CKAN "Stazione"
+        provincia        = cells[6]   # es. "Napoli"
+        tipo             = cells[lat_idx - 1]
+        indirizzo        = ", ".join(p for p in cells[7 : lat_idx - 1] if p)
+        lat              = cells[lat_idx]
+        lon              = cells[lat_idx + 1] if lat_idx + 1 < len(cells) else ""
 
-        righe_corrette.append(sinistra + [indirizzo, tipo, lat, lon])
+        righe_corrette.append([
+            codice_europeo, codice_nazionale, codice_arpac,
+            provincia, indirizzo, tipo, lat, lon,
+        ])
 
     if not righe_corrette:
         raise ValueError("Nessuna stazione valida trovata nel CSV ARPAC")
@@ -87,9 +96,8 @@ def fetch_centraline_csv() -> pd.DataFrame:
     df = pd.DataFrame(
         righe_corrette,
         columns=[
-            "rete", "nome_stazione", "codice_europeo", "codice_nazionale",
-            "codice_arpac", "provincia", "indirizzo", "tipo",
-            "latitudine", "longitudine",
+            "codice_europeo", "codice_nazionale", "codice_arpac",
+            "provincia", "indirizzo", "tipo", "latitudine", "longitudine",
         ],
     )
     df = df[df["tipo"] != "MOBILE"].copy()
